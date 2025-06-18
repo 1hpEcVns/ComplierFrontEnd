@@ -37,7 +37,7 @@ print(ast.dump(tree, indent=4))
 
 **输出结果解读：**
 
-```
+```bash
 Module(  # 整个文件是一个模块 (Module)
     body=[ # 模块的主体内容
         FunctionDef( # 这是一个函数定义 (def my_func...)
