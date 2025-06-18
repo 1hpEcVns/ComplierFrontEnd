@@ -82,6 +82,7 @@ variables that were defined but never used.
 import ast
 from dataclasses import dataclass, field
 
+# Global constants should be in uppercase.
 SOURCE_CODE = """
 def process_data(data, config):
     # 'config' is used
@@ -124,19 +125,21 @@ class AstIndexer(ast.NodeVisitor):
     Visits an AST to index variable usage within each function scope.
 
     This visitor populates a dictionary mapping function nodes to ScopeInfo
-    objects, which detail defined and used variables.
+    objects. These objects detail the defined and used variables for that
+    scope.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initializes the AstIndexer."""
         self.var_usage_index: dict[ast.FunctionDef, ScopeInfo] = {}
         self.current_function: ast.FunctionDef | None = None
 
-    # 为 ast.NodeVisitor 的特殊方法禁用命名检查并添加文档字符串
+    # Pylint is disabled for this special naming convention.
     # pylint: disable=invalid-name
-    def visit_FunctionDef(self, node: ast.FunctionDef):
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """
-        Visits a FunctionDef node, setting the current scope and processing children.
+        Visits a FunctionDef node, setting the current scope and processing
+        its children nodes.
         """
         self.current_function = node
         self.var_usage_index[node] = ScopeInfo()
@@ -148,9 +151,10 @@ class AstIndexer(ast.NodeVisitor):
         self.current_function = None
 
     # pylint: disable=invalid-name
-    def visit_Name(self, node: ast.Name):
+    def visit_Name(self, node: ast.Name) -> None:
         """
-        Visits a Name node, recording its definition or usage in the current scope.
+        Visits a Name node, recording its definition (Store context) or
+        usage (Load context) in the current function scope.
         """
         if self.current_function:
             scope_info_obj = self.var_usage_index[self.current_function]
@@ -160,16 +164,16 @@ class AstIndexer(ast.NodeVisitor):
                 scope_info_obj.used_vars.add(node.id)
 
 
-# --- 1. 解析 ---
+# --- 1. Parsing ---
 tree = ast.parse(SOURCE_CODE)
 
-# --- 2. 建立索引 ---
+# --- 2. Index Building ---
 print("--- Pass 1: Building AST Index ---")
 indexer = AstIndexer()
 indexer.visit(tree)
 print("Index built successfully.")
 
-# --- 3. 分析索引 ---
+# --- 3. Analysis ---
 print("\n--- Pass 2: Analyzing the Index ---")
 for func_node, scope_info in indexer.var_usage_index.items():
     unused_vars = sorted(list(scope_info.defined_vars - scope_info.used_vars))
@@ -180,6 +184,7 @@ for func_node, scope_info in indexer.var_usage_index.items():
             f"In function '{func_name}' (line {line_num}), "
             f"unused variables: {unused_vars}"
         )
+
 
 ```
 
