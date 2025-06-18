@@ -34,7 +34,6 @@ class APIMigrator(ast.NodeTransformer):
         # 检查被调用的函数是不是我们想找的 'log_warning'
         # node.func 是代表函数名的节点，这里它是一个 Name 节点
         if isinstance(node.func, ast.Name) and node.func.id == "log_warning":
-
             # --- 开始构建新的 AST 节点 ---
 
             # 1. 构建新的函数名节点: `logging.warning`
