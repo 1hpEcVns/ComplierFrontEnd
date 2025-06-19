@@ -10,9 +10,12 @@ from ..api.controllers import api_bp
 
 def create_app():
     """应用工厂函数"""
-    app = Flask(
-        __name__, static_folder="../../static", template_folder="../../templates"
-    )
+    # 获取src目录的绝对路径
+    src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    template_dir = os.path.join(src_dir, "templates")
+    static_dir = os.path.join(src_dir, "static")
+
+    app = Flask(__name__, static_folder=static_dir, template_folder=template_dir)
 
     # 启用CORS
     CORS(app)
