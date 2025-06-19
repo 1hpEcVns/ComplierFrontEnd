@@ -165,6 +165,71 @@
       pointer-events: none;
     }
 
+    /* 2D节点样式增强 */
+    .ast-node-2d {
+      transition: all 0.3s ease;
+      cursor: pointer;
+    }
+
+    .ast-node-2d:hover .node-rect {
+      stroke-width: 3;
+      filter: drop-shadow(3px 3px 6px rgba(0, 0, 0, 0.4)) brightness(1.1);
+    }
+
+    .ast-node-2d.selected .node-rect {
+      stroke: #00d4ff;
+      stroke-width: 3;
+      filter: drop-shadow(0 0 8px rgba(0, 212, 255, 0.6));
+    }
+
+    .expand-button {
+      transition: all 0.2s ease;
+    }
+
+    .expand-button:hover {
+      r: 10;
+      fill: #66BB6A !important;
+    }
+
+    /* 节点类型颜色增强 */
+    .node-function {
+      fill: #ff6b6b;
+    }
+
+    .node-class {
+      fill: #ff9500;
+    }
+
+    .node-control {
+      fill: #ffd93d;
+    }
+
+    .node-assignment {
+      fill: #95e1d3;
+    }
+
+    .node-expression {
+      fill: #a8e6cf;
+    }
+
+    .node-literal {
+      fill: #a5d6a7;
+    }
+
+    /* 工具提示样式 */
+    .node-tooltip {
+      position: absolute;
+      background: rgba(0, 0, 0, 0.9);
+      color: white;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      pointer-events: none;
+      z-index: 1000;
+      max-width: 200px;
+      word-wrap: break-word;
+    }
+
     /* 画布覆盖层 - 用于2D UI元素 */
     #canvas-overlay {
       position: absolute;
@@ -465,6 +530,12 @@ if __name__ == "__main__":
           <div class="control-row">
             <button class="control-btn" id="tilt-up">↑</button>
             <button class="control-btn" id="tilt-down">↓</button>
+          </div>
+        </div>
+        <div class="control-group" id="2d-controls" style="display: none;">
+          <div class="control-row">
+            <button class="control-btn" id="expand-all" title="展开所有节点">⊞</button>
+            <button class="control-btn" id="collapse-all" title="折叠所有节点">⊟</button>
           </div>
         </div>
       </div>
@@ -1286,46 +1357,177 @@ if __name__ == "__main__":
       return positions;
     }
 
+    // 节点展开状态管理
+    const nodeExpandedState = new Map();
+
+    // 获取节点显示文本（带缩略）
+    function getNodeDisplayText(node) {
+      const type = node.type;
+      let text = type;
+
+      // 根据节点类型进行智能缩略
+      switch (type) {
+        case 'FunctionDef':
+          text = `def ${node.name || '?'}(...)`;
+          break;
+        case 'ClassDef':
+          text = `class ${node.name || '?'}`;
+          break;
+        case 'Assign':
+          const target = node.data.targets?.[0]?.id || '?';
+          text = `${target} = ...`;
+          break;
+        case 'Call':
+          const func = node.data.func?.id || node.data.func?.attr || '?';
+          text = `${func}(...)`;
+          break;
+        case 'BinOp':
+          text = 'expr ○ expr';
+          break;
+        case 'Compare':
+          text = 'expr ⋈ expr';
+          break;
+        case 'If':
+          text = 'if ...';
+          break;
+        case 'For':
+          text = 'for ... in ...';
+          break;
+        case 'While':
+          text = 'while ...';
+          break;
+        case 'Return':
+          text = 'return ...';
+          break;
+        case 'Constant':
+          let value = node.value || node.data.value;
+          if (typeof value === 'string') {
+            text = value.length > 20 ? `"${value.substring(0, 17)}..."` : `"${value}"`;
+          } else {
+            text = String(value);
+          }
+          break;
+        case 'Name':
+          text = node.data.id || '?';
+          break;
+        case 'Attribute':
+          text = `${node.data.value?.id || '?'}.${node.data.attr || '?'}`;
+          break;
+        default:
+          if (node.name) text += ` ${node.name}`;
+          if (node.value) text += ` = ${node.value}`;
+      }
+
+      return text;
+    }
+
+    // 计算自适应节点尺寸
+    function calculateNodeSize(text, isExpanded = false) {
+      const baseWidth = 120;
+      const baseHeight = 40;
+      const charWidth = 8;
+      const lineHeight = 16;
+
+      // 基于文本长度计算宽度
+      const textWidth = text.length * charWidth + 20; // 20px padding
+      const width = Math.max(baseWidth, Math.min(textWidth, isExpanded ? 300 : 200));
+
+      // 基于行数计算高度
+      const lines = isExpanded ? Math.ceil(text.length / 25) : 1;
+      const height = Math.max(baseHeight, lines * lineHeight + 10);
+
+      return { width, height };
+    }
+
     function drawNodes2D(nodes, positions) {
       nodes.forEach(node => {
         const pos = positions.get(node.id);
         if (!pos) return;
+
+        // 检查节点是否展开
+        const isExpanded = nodeExpandedState.get(node.id) || false;
+        const displayText = getNodeDisplayText(node);
+        const size = calculateNodeSize(displayText, isExpanded);
 
         // 创建节点组
         const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         group.setAttribute('class', 'ast-node-2d');
         group.setAttribute('data-node-id', node.id);
 
-        // 根据节点类型选择颜色和形状
-        const nodeColor = getNodeColor2D(node.type);
-        const nodeSize = getNodeSize2D(node.type);
+        // 绘制自适应的矩形节点
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', pos.x - size.width / 2);
+        rect.setAttribute('y', pos.y - size.height / 2);
+        rect.setAttribute('width', size.width);
+        rect.setAttribute('height', size.height);
+        rect.setAttribute('rx', 8);
+        rect.setAttribute('fill', getNodeColor2D(node.type));
+        rect.setAttribute('stroke', '#fff');
+        rect.setAttribute('stroke-width', 2);
+        rect.setAttribute('class', 'node-rect');
 
-        // 绘制节点形状
-        let shape;
-        if (['FunctionDef', 'ClassDef'].includes(node.type)) {
-          shape = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-          shape.setAttribute('x', pos.x - nodeSize / 2);
-          shape.setAttribute('y', pos.y - nodeSize / 2);
-          shape.setAttribute('width', nodeSize);
-          shape.setAttribute('height', nodeSize);
-          shape.setAttribute('rx', 5);
-        } else {
-          shape = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-          shape.setAttribute('cx', pos.x);
-          shape.setAttribute('cy', pos.y);
-          shape.setAttribute('r', nodeSize / 2);
+        // 添加阴影效果
+        rect.setAttribute('filter', 'drop-shadow(2px 2px 4px rgba(0,0,0,0.2))');
+
+        // 添加主文本
+        const mainText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        mainText.setAttribute('x', pos.x);
+        mainText.setAttribute('y', pos.y - (isExpanded ? size.height / 4 : 0));
+        mainText.setAttribute('text-anchor', 'middle');
+        mainText.setAttribute('dominant-baseline', 'middle');
+        mainText.setAttribute('class', 'ast-label-2d');
+        mainText.setAttribute('font-size', '12px');
+        mainText.setAttribute('font-weight', 'bold');
+        mainText.textContent = displayText;
+
+        // 如果节点有子节点，添加展开/折叠按钮
+        let expandButton = null;
+        if (node.children && node.children.length > 0) {
+          expandButton = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          expandButton.setAttribute('cx', pos.x + size.width / 2 - 15);
+          expandButton.setAttribute('cy', pos.y - size.height / 2 + 15);
+          expandButton.setAttribute('r', 8);
+          expandButton.setAttribute('fill', '#4CAF50');
+          expandButton.setAttribute('stroke', '#fff');
+          expandButton.setAttribute('stroke-width', 1);
+          expandButton.setAttribute('class', 'expand-button');
+          expandButton.style.cursor = 'pointer';
+
+          const expandIcon = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          expandIcon.setAttribute('x', pos.x + size.width / 2 - 15);
+          expandIcon.setAttribute('y', pos.y - size.height / 2 + 15);
+          expandIcon.setAttribute('text-anchor', 'middle');
+          expandIcon.setAttribute('dominant-baseline', 'middle');
+          expandIcon.setAttribute('font-size', '10px');
+          expandIcon.setAttribute('font-weight', 'bold');
+          expandIcon.setAttribute('fill', '#fff');
+          expandIcon.setAttribute('class', 'expand-icon');
+          expandIcon.style.pointerEvents = 'none';
+          expandIcon.textContent = isExpanded ? '−' : '+';
+
+          // 展开按钮点击事件
+          expandButton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleNodeExpansion(node.id);
+          });
+
+          group.appendChild(expandButton);
+          group.appendChild(expandIcon);
         }
 
-        shape.setAttribute('fill', nodeColor);
-        shape.setAttribute('stroke', '#fff');
-        shape.setAttribute('stroke-width', 2);
-
-        // 添加文本标签
-        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        text.setAttribute('x', pos.x);
-        text.setAttribute('y', pos.y + 4);
-        text.setAttribute('class', 'ast-label-2d');
-        text.textContent = node.name || node.type || 'Node';
+        // 如果展开，显示详细信息
+        if (isExpanded) {
+          const details = getNodeDetails(node);
+          details.forEach((detail, index) => {
+            const detailText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            detailText.setAttribute('x', pos.x - size.width / 2 + 10);
+            detailText.setAttribute('y', pos.y + (index - details.length / 2 + 1) * 14);
+            detailText.setAttribute('font-size', '10px');
+            detailText.setAttribute('fill', '#333');
+            detailText.textContent = detail;
+            group.appendChild(detailText);
+          });
+        }
 
         // 添加事件监听
         group.addEventListener('click', () => selectNode2D(node, group));
@@ -1338,12 +1540,70 @@ if __name__ == "__main__":
           }
         });
 
-        group.appendChild(shape);
-        group.appendChild(text);
+        group.appendChild(rect);
+        group.appendChild(mainText);
         svgCanvas.appendChild(group);
 
         astNodes2D.set(node.id, { node, element: group });
       });
+    }
+
+    // 获取节点详细信息
+    function getNodeDetails(node) {
+      const details = [];
+      const data = node.data;
+
+      // 添加位置信息
+      if (data.lineno) details.push(`line: ${data.lineno}`);
+
+      // 根据节点类型添加特定信息
+      switch (node.type) {
+        case 'FunctionDef':
+          if (data.args && data.args.args) {
+            const args = data.args.args.map(arg => arg.arg || '?').join(', ');
+            details.push(`args: ${args}`);
+          }
+          if (data.returns) details.push(`returns: ${data.returns.id || '?'}`);
+          break;
+        case 'ClassDef':
+          if (data.bases && data.bases.length > 0) {
+            const bases = data.bases.map(base => base.id || '?').join(', ');
+            details.push(`bases: ${bases}`);
+          }
+          break;
+        case 'Call':
+          if (data.args && data.args.length > 0) {
+            details.push(`args: ${data.args.length} items`);
+          }
+          if (data.keywords && data.keywords.length > 0) {
+            details.push(`kwargs: ${data.keywords.length} items`);
+          }
+          break;
+        case 'BinOp':
+          if (data.op) details.push(`op: ${data.op.node_type || '?'}`);
+          break;
+        case 'Compare':
+          if (data.ops && data.ops.length > 0) {
+            details.push(`ops: ${data.ops.map(op => op.node_type || '?').join(', ')}`);
+          }
+          break;
+        case 'Assign':
+          if (data.targets) details.push(`targets: ${data.targets.length}`);
+          break;
+      }
+
+      return details.slice(0, 4); // 最多显示4行详细信息
+    }
+
+    // 切换节点展开状态
+    function toggleNodeExpansion(nodeId) {
+      const currentState = nodeExpandedState.get(nodeId) || false;
+      nodeExpandedState.set(nodeId, !currentState);
+
+      // 重新绘制2D视图
+      if (currentAST) {
+        visualizeAST2D(currentAST, currentLayout);
+      }
     }
 
     function drawConnections2D(nodes, positions) {
@@ -1423,12 +1683,14 @@ if __name__ == "__main__":
     // 视图切换
     function toggleView(is3D) {
       is3DMode = is3D;
+      const controls2D = document.getElementById('2d-controls');
 
       if (is3D) {
         view3DBtn.classList.add('active');
         view2DBtn.classList.remove('active');
         threeJSCanvas.style.display = 'block';
         svgCanvasElement.style.display = 'none';
+        controls2D.style.display = 'none';
 
         // 如果有AST数据，重新渲染3D视图
         if (currentAST) {
@@ -1439,6 +1701,7 @@ if __name__ == "__main__":
         view3DBtn.classList.remove('active');
         threeJSCanvas.style.display = 'none';
         svgCanvasElement.style.display = 'block';
+        controls2D.style.display = 'block';
 
         // 如果有AST数据，渲染2D视图
         if (currentAST) {
@@ -1477,6 +1740,41 @@ if __name__ == "__main__":
       document.getElementById('tilt-down').onclick = () => {
         camera.position.applyAxisAngle(new THREE.Vector3(1, 0, 0), -0.2);
       };
+
+      // 2D控制按钮
+      document.getElementById('expand-all').onclick = () => {
+        expandAllNodes();
+      };
+
+      document.getElementById('collapse-all').onclick = () => {
+        collapseAllNodes();
+      };
+    }
+
+    // 展开所有节点
+    function expandAllNodes() {
+      if (!currentAST) return;
+
+      const nodes = extractNodes2D(currentAST);
+      nodes.forEach(node => {
+        if (node.children && node.children.length > 0) {
+          nodeExpandedState.set(node.id, true);
+        }
+      });
+
+      visualizeAST2D(currentAST, currentLayout);
+      showStatus('所有节点已展开', 'success');
+    }
+
+    // 折叠所有节点
+    function collapseAllNodes() {
+      nodeExpandedState.clear();
+
+      if (currentAST) {
+        visualizeAST2D(currentAST, currentLayout);
+      }
+
+      showStatus('所有节点已折叠', 'success');
     }
 
     // 事件监听器
