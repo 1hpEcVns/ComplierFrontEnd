@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>3D 可视化 AST 编辑器</title>
+  <title>2D/3D 可视化 AST 编辑器</title>
   <style>
     * {
       margin: 0;
@@ -111,7 +111,7 @@
       padding-bottom: 5px;
     }
 
-    /* 3D 画布区域 */
+    /* 画布区域 */
     #canvas-container {
       grid-area: canvas;
       position: relative;
@@ -123,6 +123,46 @@
       width: 100%;
       height: 100%;
       display: block;
+    }
+
+    #svg-canvas {
+      width: 100%;
+      height: 100%;
+      display: none;
+      background: #1a1a1a;
+    }
+
+    /* 2D 视图样式 */
+    .ast-node-2d {
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+
+    .ast-node-2d:hover {
+      stroke-width: 3;
+      filter: brightness(1.2);
+    }
+
+    .ast-node-2d.selected {
+      stroke: #ff6b6b;
+      stroke-width: 4;
+      filter: drop-shadow(0 0 10px #ff6b6b);
+    }
+
+    .ast-connection-2d {
+      stroke: #666;
+      stroke-width: 2;
+      fill: none;
+      marker-end: url(#arrowhead);
+    }
+
+    .ast-label-2d {
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 12px;
+      fill: white;
+      text-anchor: middle;
+      dominant-baseline: middle;
+      pointer-events: none;
     }
 
     /* 画布覆盖层 - 用于2D UI元素 */
@@ -389,9 +429,16 @@ if __name__ == "__main__":
       </div>
     </div>
 
-    <!-- 3D 画布区域 -->
+    <!-- 画布区域 -->
     <div id="canvas-container">
       <canvas id="threejs-canvas"></canvas>
+      <svg id="svg-canvas">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#666" />
+          </marker>
+        </defs>
+      </svg>
       <div id="canvas-overlay"></div>
 
       <!-- 视图控制器 -->
@@ -425,7 +472,7 @@ if __name__ == "__main__":
         <h3>🎯 选中节点</h3>
         <div id="selected-node-info">
           <div style="text-align: center; color: #666; padding: 40px 20px;">
-            点击3D视图中的节点来查看详细信息
+            点击视图中的节点来查看详细信息
           </div>
         </div>
       </div>
@@ -460,6 +507,11 @@ if __name__ == "__main__":
     let currentAST = null;
     let is3DMode = true;
 
+    // 2D 相关变量
+    let svgCanvas, selectedNode2D = null;
+    let astNodes2D = new Map();
+    let currentLayout = 'tree';
+
     // API 配置
     const API_URL = 'http://127.0.0.1:5001/api';
 
@@ -475,6 +527,8 @@ if __name__ == "__main__":
     const editFormContainer = document.getElementById('edit-form-container');
     const outputPanel = document.getElementById('output-panel');
     const statusDiv = document.getElementById('status');
+    const threeJSCanvas = document.getElementById('threejs-canvas');
+    const svgCanvasElement = document.getElementById('svg-canvas');
 
     // 初始化 Three.js 场景
     function initThreeJS() {
@@ -1085,6 +1139,269 @@ if __name__ == "__main__":
       showStatus('布局已更新', 'success');
     }
 
+    // 2D 可视化函数
+    function init2D() {
+      svgCanvas = svgCanvasElement;
+    }
+
+    function visualizeAST2D(astData, layout = 'tree') {
+      // 清空现有内容
+      while (svgCanvas.children.length > 1) { // 保留 defs
+        svgCanvas.removeChild(svgCanvas.lastChild);
+      }
+      astNodes2D.clear();
+
+      // 计算2D布局
+      const nodes = extractNodes2D(astData);
+      const positions = calculate2DLayout(nodes, layout);
+
+      // 绘制连接线
+      drawConnections2D(nodes, positions);
+
+      // 绘制节点
+      drawNodes2D(nodes, positions);
+    }
+
+    function extractNodes2D(astData) {
+      const nodes = [];
+
+      function traverse(node, parent = null, depth = 0) {
+        if (!node || typeof node !== 'object') return;
+
+        const nodeInfo = {
+          id: `node_${nodes.length}`,
+          type: node.node_type || 'Unknown',
+          name: node.name || '',
+          value: node.value || '',
+          parent: parent,
+          children: [],
+          depth: depth,
+          data: node
+        };
+
+        nodes.push(nodeInfo);
+
+        // 处理子节点
+        ['body', 'orelse', 'finalbody', 'handlers'].forEach(key => {
+          if (node[key] && Array.isArray(node[key])) {
+            node[key].forEach(child => {
+              const childNode = traverse(child, nodeInfo, depth + 1);
+              if (childNode) nodeInfo.children.push(childNode);
+            });
+          }
+        });
+
+        // 处理其他单个子节点
+        Object.values(node).forEach(value => {
+          if (value && typeof value === 'object' && value.node_type && !Array.isArray(value)) {
+            const childNode = traverse(value, nodeInfo, depth + 1);
+            if (childNode) nodeInfo.children.push(childNode);
+          }
+        });
+
+        return nodeInfo;
+      }
+
+      if (astData && astData.node_type) {
+        traverse(astData);
+      }
+
+      return nodes;
+    }
+
+    function calculate2DLayout(nodes, layout) {
+      const positions = new Map();
+      const rect = svgCanvas.getBoundingClientRect();
+      const width = rect.width || 800;
+      const height = rect.height || 600;
+
+      if (layout === 'tree') {
+        // 树形布局
+        const levels = {};
+        nodes.forEach(node => {
+          if (!levels[node.depth]) levels[node.depth] = [];
+          levels[node.depth].push(node);
+        });
+
+        Object.keys(levels).forEach(depth => {
+          const levelNodes = levels[depth];
+          const levelHeight = (height / (Object.keys(levels).length + 1)) * (parseInt(depth) + 1);
+
+          levelNodes.forEach((node, index) => {
+            const x = (width / (levelNodes.length + 1)) * (index + 1);
+            positions.set(node.id, { x, y: levelHeight });
+          });
+        });
+      } else if (layout === 'radial') {
+        // 径向布局
+        const centerX = width / 2;
+        const centerY = height / 2;
+        const maxRadius = Math.min(width, height) / 3;
+
+        nodes.forEach((node, index) => {
+          if (index === 0) {
+            // 根节点在中心
+            positions.set(node.id, { x: centerX, y: centerY });
+          } else {
+            const radius = (node.depth) * (maxRadius / 4);
+            const angle = (index / nodes.length) * 2 * Math.PI;
+            const x = centerX + Math.cos(angle) * radius;
+            const y = centerY + Math.sin(angle) * radius;
+            positions.set(node.id, { x, y });
+          }
+        });
+      } else {
+        // 默认网格布局
+        const cols = Math.ceil(Math.sqrt(nodes.length));
+        const cellWidth = width / cols;
+        const cellHeight = height / Math.ceil(nodes.length / cols);
+
+        nodes.forEach((node, index) => {
+          const col = index % cols;
+          const row = Math.floor(index / cols);
+          const x = (col + 0.5) * cellWidth;
+          const y = (row + 0.5) * cellHeight;
+          positions.set(node.id, { x, y });
+        });
+      }
+
+      return positions;
+    }
+
+    function drawNodes2D(nodes, positions) {
+      nodes.forEach(node => {
+        const pos = positions.get(node.id);
+        if (!pos) return;
+
+        // 创建节点组
+        const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        group.setAttribute('class', 'ast-node-2d');
+        group.setAttribute('data-node-id', node.id);
+
+        // 根据节点类型选择颜色和形状
+        const nodeColor = getNodeColor2D(node.type);
+        const nodeSize = getNodeSize2D(node.type);
+
+        // 绘制节点形状
+        let shape;
+        if (['FunctionDef', 'ClassDef'].includes(node.type)) {
+          shape = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          shape.setAttribute('x', pos.x - nodeSize / 2);
+          shape.setAttribute('y', pos.y - nodeSize / 2);
+          shape.setAttribute('width', nodeSize);
+          shape.setAttribute('height', nodeSize);
+          shape.setAttribute('rx', 5);
+        } else {
+          shape = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          shape.setAttribute('cx', pos.x);
+          shape.setAttribute('cy', pos.y);
+          shape.setAttribute('r', nodeSize / 2);
+        }
+
+        shape.setAttribute('fill', nodeColor);
+        shape.setAttribute('stroke', '#fff');
+        shape.setAttribute('stroke-width', 2);
+
+        // 添加文本标签
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', pos.x);
+        text.setAttribute('y', pos.y + 4);
+        text.setAttribute('class', 'ast-label-2d');
+        text.textContent = node.name || node.type || 'Node';
+
+        // 添加事件监听
+        group.addEventListener('click', () => selectNode2D(node, group));
+        group.addEventListener('mouseenter', () => {
+          group.style.filter = 'brightness(1.2)';
+        });
+        group.addEventListener('mouseleave', () => {
+          if (selectedNode2D !== group) {
+            group.style.filter = '';
+          }
+        });
+
+        group.appendChild(shape);
+        group.appendChild(text);
+        svgCanvas.appendChild(group);
+
+        astNodes2D.set(node.id, { node, element: group });
+      });
+    }
+
+    function drawConnections2D(nodes, positions) {
+      nodes.forEach(node => {
+        if (node.parent) {
+          const fromPos = positions.get(node.parent.id);
+          const toPos = positions.get(node.id);
+
+          if (fromPos && toPos) {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', fromPos.x);
+            line.setAttribute('y1', fromPos.y);
+            line.setAttribute('x2', toPos.x);
+            line.setAttribute('y2', toPos.y);
+            line.setAttribute('class', 'ast-connection-2d');
+
+            // 插入到节点之前
+            svgCanvas.insertBefore(line, svgCanvas.children[1]);
+          }
+        }
+      });
+    }
+
+    function getNodeColor2D(nodeType) {
+      const colors = {
+        'Module': '#00d4ff',
+        'FunctionDef': '#ff6b6b',
+        'ClassDef': '#ff9500',
+        'If': '#ffd93d',
+        'For': '#4ecdc4',
+        'While': '#45b7d1',
+        'Try': '#96ceb4',
+        'Assign': '#95e1d3',
+        'Return': '#f38ba8',
+        'Call': '#a8e6cf',
+        'Name': '#90caf9',
+        'Constant': '#a5d6a7'
+      };
+      return colors[nodeType] || '#888888';
+    }
+
+    function getNodeSize2D(nodeType) {
+      const sizes = {
+        'Module': 60,
+        'FunctionDef': 50,
+        'ClassDef': 50,
+        'If': 40,
+        'For': 40,
+        'While': 40,
+        'Try': 40,
+        'Assign': 35,
+        'Return': 35,
+        'Call': 30,
+        'Name': 25,
+        'Constant': 25
+      };
+      return sizes[nodeType] || 30;
+    }
+
+    function selectNode2D(node, element) {
+      // 清除之前的选择
+      if (selectedNode2D) {
+        selectedNode2D.classList.remove('selected');
+        selectedNode2D.style.filter = '';
+      }
+
+      // 选择新节点
+      selectedNode2D = element;
+      element.classList.add('selected');
+      element.style.filter = 'brightness(1.2)';
+
+      // 显示节点信息
+      showNodeInfo(node.data);
+      showEditForm(node.data);
+    }
+
     // 视图切换
     function toggleView(is3D) {
       is3DMode = is3D;
@@ -1092,15 +1409,24 @@ if __name__ == "__main__":
       if (is3D) {
         view3DBtn.classList.add('active');
         view2DBtn.classList.remove('active');
-        camera.position.set(0, 5, 10);
+        threeJSCanvas.style.display = 'block';
+        svgCanvasElement.style.display = 'none';
+
+        // 如果有AST数据，重新渲染3D视图
+        if (currentAST) {
+          visualizeAST(currentAST);
+        }
       } else {
         view2DBtn.classList.add('active');
         view3DBtn.classList.remove('active');
-        camera.position.set(0, 0, 15);
-        camera.lookAt(0, 0, 0);
-      }
+        threeJSCanvas.style.display = 'none';
+        svgCanvasElement.style.display = 'block';
 
-      controls.reset();
+        // 如果有AST数据，渲染2D视图
+        if (currentAST) {
+          visualizeAST2D(currentAST, currentLayout);
+        }
+      }
     }
 
     // 视图控制
@@ -1146,8 +1472,9 @@ if __name__ == "__main__":
     // 初始化
     document.addEventListener('DOMContentLoaded', () => {
       initThreeJS();
+      init2D();
       setupViewControls();
-      showStatus('3D AST 编辑器已就绪', 'info');
+      showStatus('2D/3D AST 编辑器已就绪', 'info');
     });
   </script>
 </body>

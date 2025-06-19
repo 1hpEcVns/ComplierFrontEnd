@@ -5,6 +5,7 @@ from flask_cors import CORS
 import io
 import contextlib
 import copy
+import math
 
 app = Flask(__name__, static_folder="", template_folder="")
 CORS(app)  # 允许跨域请求，方便前后端开发
@@ -54,6 +55,236 @@ def dict_to_ast(d: dict | list | str):
     # 用转换后的子字段实例化节点类
     # 注意：这里假设字典的键与 AST 节点的构造函数参数完全匹配
     return NodeClass(**d)
+
+
+# --- 3D 可视化专用函数 ---
+
+
+def calculate_2d_positions(ast_dict, layout_type="tree"):
+    """计算AST节点的2D位置"""
+    positions = {}
+    nodes = []
+
+    def extract_nodes(node, parent=None, depth=0):
+        if not isinstance(node, dict) or "node_type" not in node:
+            return
+
+        node_info = {
+            "id": len(nodes),
+            "data": node,
+            "parent": parent,
+            "depth": depth,
+            "children": [],
+        }
+        nodes.append(node_info)
+
+        # 处理子节点
+        for key, value in node.items():
+            if key in ["body", "orelse", "finalbody", "handlers"] and isinstance(
+                value, list
+            ):
+                for child in value:
+                    if isinstance(child, dict) and "node_type" in child:
+                        child_info = extract_nodes(child, node_info, depth + 1)
+                        if child_info:
+                            node_info["children"].append(child_info)
+            elif isinstance(value, dict) and "node_type" in value:
+                child_info = extract_nodes(value, node_info, depth + 1)
+                if child_info:
+                    node_info["children"].append(child_info)
+
+        return node_info
+
+    if isinstance(ast_dict, dict):
+        extract_nodes(ast_dict)
+
+    # 计算布局
+    if layout_type == "tree":
+        # 树形布局
+        levels = {}
+        for node in nodes:
+            if node["depth"] not in levels:
+                levels[node["depth"]] = []
+            levels[node["depth"]].append(node)
+
+        width, height = 800, 600
+        for depth, level_nodes in levels.items():
+            y = (height / (len(levels) + 1)) * (depth + 1)
+            for i, node in enumerate(level_nodes):
+                x = (width / (len(level_nodes) + 1)) * (i + 1)
+                positions[id(node["data"])] = {"x": x, "y": y, "depth": depth}
+
+    elif layout_type == "radial":
+        # 径向布局
+        import math
+
+        center_x, center_y = 400, 300
+        max_radius = 250
+
+        for i, node in enumerate(nodes):
+            if i == 0:
+                positions[id(node["data"])] = {"x": center_x, "y": center_y, "depth": 0}
+            else:
+                radius = min(node["depth"] * 80, max_radius)
+                angle = (i / len(nodes)) * 2 * math.pi
+                x = center_x + math.cos(angle) * radius
+                y = center_y + math.sin(angle) * radius
+                positions[id(node["data"])] = {"x": x, "y": y, "depth": node["depth"]}
+
+    return positions
+
+
+def calculate_3d_positions(ast_dict, layout_type="spiral"):
+    """计算AST节点的3D位置"""
+    positions = {}
+    node_index = 0
+
+    def traverse(node, depth=0, parent_pos=None, angle_offset=0):
+        nonlocal node_index
+        current_index = node_index
+        node_index += 1
+
+        if layout_type == "spiral":
+            # 螺旋布局
+            radius = depth * 3 + 2
+            angle = (current_index * 2.4 + angle_offset) % (math.pi * 2)
+            x = math.cos(angle) * radius
+            z = math.sin(angle) * radius
+            y = -depth * 2
+        elif layout_type == "tree":
+            # 树形布局
+            if parent_pos is None:
+                x, y, z = 0, 0, 0
+            else:
+                sibling_offset = (current_index % 4 - 1.5) * 2
+                x = parent_pos[0] + sibling_offset
+                y = parent_pos[1] - 3
+                z = parent_pos[2] + (depth % 2) * 2
+        elif layout_type == "circular":
+            # 圆形分层布局
+            radius = depth * 4 + 3
+            angle = (current_index * math.pi * 0.618) % (math.pi * 2)  # 黄金角
+            x = math.cos(angle) * radius
+            z = math.sin(angle) * radius
+            y = math.sin(depth * 0.5) * 2
+        else:
+            # 默认网格布局
+            x = (current_index % 5 - 2) * 3
+            y = -depth * 2
+            z = (current_index // 5) * 3
+
+        position = {"x": x, "y": y, "z": z, "depth": depth, "index": current_index}
+        positions[id(node)] = position
+
+        # 递归处理子节点
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in ["body", "orelse", "finalbody", "handlers"] and isinstance(
+                    value, list
+                ):
+                    for i, child in enumerate(value):
+                        if isinstance(child, dict):
+                            traverse(child, depth + 1, (x, y, z), i * 0.5)
+                elif isinstance(value, dict) and "node_type" in value:
+                    traverse(value, depth + 1, (x, y, z), angle_offset + 1)
+
+    if isinstance(ast_dict, dict):
+        traverse(ast_dict)
+
+    return positions
+
+
+def get_node_visual_properties(node_type):
+    """根据节点类型返回可视化属性"""
+    properties = {
+        "Module": {"shape": "sphere", "color": "#00d4ff", "size": 0.8},
+        "FunctionDef": {"shape": "box", "color": "#ff6b6b", "size": 1.2},
+        "ClassDef": {"shape": "cylinder", "color": "#ff9500", "size": 1.0},
+        "If": {"shape": "cone", "color": "#ffd93d", "size": 1.0},
+        "For": {"shape": "torus", "color": "#4ecdc4", "size": 0.8},
+        "While": {"shape": "torus", "color": "#45b7d1", "size": 0.8},
+        "Try": {"shape": "octahedron", "color": "#96ceb4", "size": 0.9},
+        "Assign": {"shape": "cylinder", "color": "#95e1d3", "size": 0.7},
+        "AugAssign": {"shape": "cylinder", "color": "#a8e6cf", "size": 0.7},
+        "Return": {"shape": "octahedron", "color": "#f38ba8", "size": 0.8},
+        "Break": {"shape": "tetrahedron", "color": "#ff8a80", "size": 0.6},
+        "Continue": {"shape": "tetrahedron", "color": "#82b1ff", "size": 0.6},
+        "Call": {"shape": "icosahedron", "color": "#a8e6cf", "size": 0.7},
+        "BinOp": {"shape": "dodecahedron", "color": "#ffd180", "size": 0.6},
+        "UnaryOp": {"shape": "tetrahedron", "color": "#ff9d80", "size": 0.5},
+        "Compare": {"shape": "cylinder", "color": "#b39ddb", "size": 0.6},
+        "Name": {"shape": "sphere", "color": "#90caf9", "size": 0.4},
+        "Constant": {"shape": "sphere", "color": "#a5d6a7", "size": 0.4},
+        "List": {"shape": "box", "color": "#ffcc02", "size": 0.6},
+        "Dict": {"shape": "box", "color": "#ff6f00", "size": 0.6},
+        "Set": {"shape": "sphere", "color": "#ff5722", "size": 0.5},
+        "Tuple": {"shape": "box", "color": "#795548", "size": 0.6},
+    }
+
+    return properties.get(
+        node_type, {"shape": "sphere", "color": "#888888", "size": 0.5}
+    )
+
+
+def extract_ast_structure(ast_dict):
+    """提取AST结构信息，用于3D渲染"""
+    nodes = []
+    connections = []
+
+    def traverse(node, parent_id=None):
+        if not isinstance(node, dict) or "node_type" not in node:
+            return
+
+        node_id = id(node)
+        node_type = node.get("node_type", "Unknown")
+
+        # 获取节点的可视化属性
+        visual_props = get_node_visual_properties(node_type)
+
+        # 提取节点信息
+        node_info = {
+            "id": node_id,
+            "type": node_type,
+            "name": node.get("name", ""),
+            "value": str(node.get("value", "")) if "value" in node else "",
+            "visual": visual_props,
+            "properties": {},
+        }
+
+        # 提取重要属性
+        for key, value in node.items():
+            if key not in [
+                "node_type",
+                "body",
+                "orelse",
+                "finalbody",
+                "handlers",
+                "lineno",
+                "col_offset",
+            ]:
+                if not isinstance(value, (dict, list)):
+                    node_info["properties"][key] = value
+
+        nodes.append(node_info)
+
+        # 创建父子连接
+        if parent_id is not None:
+            connections.append({"from": parent_id, "to": node_id})
+
+        # 递归处理子节点
+        for key, value in node.items():
+            if key in ["body", "orelse", "finalbody", "handlers"] and isinstance(
+                value, list
+            ):
+                for child in value:
+                    traverse(child, node_id)
+            elif isinstance(value, dict) and "node_type" in value:
+                traverse(value, node_id)
+
+    if isinstance(ast_dict, dict):
+        traverse(ast_dict)
+
+    return {"nodes": nodes, "connections": connections}
 
 
 # --- AST 转换函数 ---
@@ -181,6 +412,135 @@ def parse_code():
         tree = ast.parse(source_code)
         ast_json = ast_to_dict(tree)
         return jsonify({"success": True, "ast": ast_json})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@app.route("/api/parse_2d", methods=["POST"])
+def parse_code_2d():
+    """解析代码并返回适合2D渲染的结构"""
+    try:
+        source_code = request.json["code"]
+        layout_type = request.json.get("layout", "tree")
+
+        tree = ast.parse(source_code)
+        ast_json = ast_to_dict(tree)
+
+        # 计算2D位置
+        positions = calculate_2d_positions(ast_json, layout_type)
+
+        # 提取结构信息
+        structure = extract_ast_structure(ast_json)
+
+        # 合并位置信息
+        for node in structure["nodes"]:
+            if node["id"] in positions:
+                node["position"] = positions[node["id"]]
+            else:
+                node["position"] = {"x": 400, "y": 300, "depth": 0}
+
+        return jsonify(
+            {
+                "success": True,
+                "ast": ast_json,
+                "structure": structure,
+                "layout": layout_type,
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@app.route("/api/parse_3d", methods=["POST"])
+def parse_code_3d():
+    """解析代码并返回适合3D渲染的结构"""
+    try:
+        source_code = request.json["code"]
+        layout_type = request.json.get("layout", "spiral")
+
+        tree = ast.parse(source_code)
+        ast_json = ast_to_dict(tree)
+
+        # 计算3D位置
+        positions = calculate_3d_positions(ast_json, layout_type)
+
+        # 提取结构信息
+        structure = extract_ast_structure(ast_json)
+
+        # 合并位置信息
+        for node in structure["nodes"]:
+            if node["id"] in positions:
+                node["position"] = positions[node["id"]]
+            else:
+                node["position"] = {"x": 0, "y": 0, "z": 0, "depth": 0, "index": 0}
+
+        return jsonify(
+            {
+                "success": True,
+                "ast": ast_json,
+                "structure": structure,
+                "layout": layout_type,
+            }
+        )
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@app.route("/api/update_layout", methods=["POST"])
+def update_layout():
+    """重新计算AST布局"""
+    try:
+        ast_json = request.json["ast"]
+        layout_type = request.json.get("layout", "spiral")
+
+        # 重新计算位置
+        positions = calculate_3d_positions(ast_json, layout_type)
+
+        # 提取结构信息
+        structure = extract_ast_structure(ast_json)
+
+        # 合并位置信息
+        for node in structure["nodes"]:
+            if node["id"] in positions:
+                node["position"] = positions[node["id"]]
+
+        return jsonify({"success": True, "structure": structure, "layout": layout_type})
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@app.route("/api/update_node", methods=["POST"])
+def update_node():
+    """更新单个节点的属性"""
+    try:
+        ast_json = request.json["ast"]
+        node_id = request.json["node_id"]
+        updates = request.json["updates"]
+
+        # 递归查找并更新节点
+        def find_and_update(node):
+            if isinstance(node, dict) and id(node) == node_id:
+                node.update(updates)
+                return True
+            elif isinstance(node, dict):
+                for value in node.values():
+                    if isinstance(value, (dict, list)):
+                        if find_and_update(value):
+                            return True
+            elif isinstance(node, list):
+                for item in node:
+                    if find_and_update(item):
+                        return True
+            return False
+
+        if find_and_update(ast_json):
+            return jsonify({"success": True, "ast": ast_json})
+        else:
+            return jsonify({"success": False, "error": "节点未找到"}), 404
+
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 400
 
