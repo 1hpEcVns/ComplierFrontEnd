@@ -1,0 +1,724 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>可视化 AST 编辑器</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      margin: 0;
+      padding: 20px;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .header {
+      text-align: center;
+      color: white;
+      margin-bottom: 30px;
+    }
+
+    .header h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+    }
+
+    .header p {
+      font-size: 1.2em;
+      opacity: 0.9;
+    }
+
+    .workflow {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      gap: 20px;
+      align-items: start;
+      margin-bottom: 30px;
+    }
+
+    .node {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+      padding: 20px;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .node:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 35px rgba(0, 0, 0, 0.2);
+    }
+
+    .node h3 {
+      margin: 0 0 15px 0;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #f0f0f0;
+      font-size: 18px;
+      color: #333;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .node-icon {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      font-size: 14px;
+    }
+
+    .source-icon {
+      background: #4CAF50;
+    }
+
+    .transform-icon {
+      background: #FF9800;
+    }
+
+    .result-icon {
+      background: #2196F3;
+    }
+
+    textarea,
+    pre {
+      width: 100%;
+      min-height: 200px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+      font-size: 14px;
+      padding: 12px;
+      resize: vertical;
+      transition: border-color 0.2s ease;
+    }
+
+    textarea:focus {
+      outline: none;
+      border-color: #2196F3;
+      box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
+    }
+
+    pre {
+      background-color: #f8f9fa;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      margin: 0;
+    }
+
+    .arrow {
+      font-size: 32px;
+      color: white;
+      text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+      align-self: center;
+    }
+
+    button {
+      background: linear-gradient(45deg, #4CAF50, #45a049);
+      color: white;
+      border: none;
+      padding: 12px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      margin-top: 15px;
+      transition: all 0.2s ease;
+      box-shadow: 0 2px 8px rgba(76, 175, 80, 0.3);
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
+    }
+
+    button:active {
+      transform: translateY(0);
+    }
+
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .transform-operations {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+
+    .operation {
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 15px;
+      background: #f9f9f9;
+    }
+
+    .operation.active {
+      border-color: #2196F3;
+      background: #e3f2fd;
+    }
+
+    .operation h4 {
+      margin: 0 0 10px 0;
+      color: #333;
+      font-size: 16px;
+    }
+
+    .input-group {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+
+    .input-group input,
+    .input-group select {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+
+    .input-group input:focus,
+    .input-group select:focus {
+      outline: none;
+      border-color: #2196F3;
+    }
+
+    .operation button {
+      width: 100%;
+      margin-top: 10px;
+      font-size: 13px;
+      padding: 8px 16px;
+    }
+
+    .output {
+      background-color: #1e1e1e;
+      color: #00ff00;
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+      border-radius: 8px;
+      padding: 15px;
+      min-height: 100px;
+      margin-top: 15px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .error {
+      background-color: #ffebee;
+      color: #c62828;
+      border: 1px solid #ffcdd2;
+      padding: 12px;
+      border-radius: 6px;
+      margin-top: 10px;
+    }
+
+    .success {
+      background-color: #e8f5e8;
+      color: #2e7d32;
+      border: 1px solid #c8e6c9;
+      padding: 12px;
+      border-radius: 6px;
+      margin-top: 10px;
+    }
+
+    .ast-viewer {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+      padding: 20px;
+      margin-top: 20px;
+    }
+
+    .ast-viewer h3 {
+      margin: 0 0 15px 0;
+      color: #333;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .ast-tree {
+      background: #f8f9fa;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 15px;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+      font-size: 12px;
+      white-space: pre;
+    }
+
+    .workflow-controls {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+      padding: 20px;
+      margin-top: 20px;
+    }
+
+    .workflow-controls h3 {
+      margin: 0 0 15px 0;
+      color: #333;
+    }
+
+    .workflow-buttons {
+      display: flex;
+      gap: 10px;
+    }
+
+    .workflow-buttons button {
+      flex: 1;
+      margin-top: 0;
+    }
+
+    @media (max-width: 1200px) {
+      .workflow {
+        grid-template-columns: 1fr;
+        gap: 30px;
+      }
+
+      .arrow {
+        transform: rotate(90deg);
+        justify-self: center;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🌳 可视化 AST 编辑器</h1>
+      <p>用可视化工作流的方式编辑 Python 抽象语法树</p>
+    </div>
+
+    <div class="workflow">
+      <!-- Node 1: Source Code -->
+      <div class="node">
+        <h3>
+          <span class="node-icon source-icon">1</span>
+          源代码输入
+        </h3>
+        <textarea id="source-code" placeholder="在这里输入 Python 代码...">def hello(name):
+    message = "Hello, " + name
+    print(message)
+    return message
+
+def calculate(x, y):
+    result = x * 2 + y
+    return result
+
+hello("World")
+result = calculate(5, 3)</textarea>
+        <button id="parse-btn">🔍 解析代码</button>
+        <div id="parse-status"></div>
+      </div>
+
+      <div class="arrow">➡️</div>
+
+      <!-- Node 2: Transformation -->
+      <div class="node">
+        <h3>
+          <span class="node-icon transform-icon">2</span>
+          AST 转换操作
+        </h3>
+        <div class="transform-operations">
+          <div class="operation" id="rename-op">
+            <h4>🏷️ 重命名函数</h4>
+            <div class="input-group">
+              <input type="text" id="old-name" placeholder="原函数名">
+              <input type="text" id="new-name" placeholder="新函数名">
+            </div>
+            <button onclick="applyTransform('rename_function')">应用重命名</button>
+          </div>
+
+          <div class="operation" id="logging-op">
+            <h4>📝 添加日志</h4>
+            <div class="input-group">
+              <input type="text" id="log-message" placeholder="日志消息" value="函数执行">
+            </div>
+            <button onclick="applyTransform('add_logging')">添加日志</button>
+          </div>
+
+          <div class="operation" id="constants-op">
+            <h4>🔢 替换常量</h4>
+            <div class="input-group">
+              <input type="text" id="old-value" placeholder="原值">
+              <input type="text" id="new-value" placeholder="新值">
+            </div>
+            <button onclick="applyTransform('replace_constants')">替换常量</button>
+          </div>
+
+          <div class="operation" id="remove-op">
+            <h4>🗑️ 删除语句</h4>
+            <div class="input-group">
+              <select id="stmt-type" title="选择要删除的语句类型">
+                <option value="Expr">表达式语句</option>
+                <option value="Pass">pass 语句</option>
+                <option value="Import">import 语句</option>
+                <option value="ImportFrom">from import 语句</option>
+              </select>
+            </div>
+            <button onclick="applyTransform('remove_statements')">删除语句</button>
+          </div>
+        </div>
+        <div id="transform-status"></div>
+      </div>
+
+      <div class="arrow">➡️</div>
+
+      <!-- Node 3: Result -->
+      <div class="node">
+        <h3>
+          <span class="node-icon result-icon">3</span>
+          生成结果
+        </h3>
+        <label><strong>转换后的代码：</strong></label>
+        <pre id="result-code" placeholder="转换后的代码将在这里显示..."></pre>
+        <button id="run-btn">▶️ 运行代码</button>
+        <label><strong>执行输出：</strong></label>
+        <div id="output" class="output">等待执行...</div>
+        <div id="execution-status"></div>
+      </div>
+    </div>
+
+    <!-- AST Viewer -->
+    <div class="ast-viewer">
+      <h3>
+        🌲 AST 结构视图
+        <button onclick="toggleAstView()" id="ast-toggle-btn"
+          style="margin-left: auto; padding: 6px 12px; font-size: 12px;">显示 AST</button>
+      </h3>
+      <div id="ast-tree" class="ast-tree" style="display: none;">
+        解析代码后，AST 结构将在这里显示...
+      </div>
+    </div>
+
+    <!-- Workflow Controls -->
+    <div class="workflow-controls">
+      <h3>💾 工作流管理</h3>
+      <div class="input-group">
+        <input type="text" id="workflow-name" placeholder="工作流名称">
+      </div>
+      <div class="workflow-buttons">
+        <button onclick="saveWorkflow()">保存工作流</button>
+        <button onclick="loadWorkflow()">加载示例工作流</button>
+        <button onclick="resetWorkflow()">重置</button>
+      </div>
+      <div id="workflow-status"></div>
+    </div>
+  </div>
+
+  <script>
+    const API_URL = 'http://127.0.0.1:5001/api';
+    let currentAstJson = null;
+    let operationHistory = [];
+
+    // --- DOM Elements ---
+    const sourceCodeEl = document.getElementById('source-code');
+    const parseBtn = document.getElementById('parse-btn');
+    const runBtn = document.getElementById('run-btn');
+    const resultCodeEl = document.getElementById('result-code');
+    const outputEl = document.getElementById('output');
+    const astTreeEl = document.getElementById('ast-tree');
+
+    // --- Utility Functions ---
+    function showStatus(elementId, message, type = 'info') {
+      const element = document.getElementById(elementId);
+      element.className = type;
+      element.textContent = message;
+      setTimeout(() => {
+        element.textContent = '';
+        element.className = '';
+      }, 3000);
+    }
+
+    function formatAstForDisplay(ast, indent = 0) {
+      const spaces = '  '.repeat(indent);
+      if (typeof ast === 'object' && ast !== null) {
+        if (Array.isArray(ast)) {
+          return '[\n' + ast.map(item => spaces + '  ' + formatAstForDisplay(item, indent + 1)).join(',\n') + '\n' + spaces + ']';
+        } else {
+          const nodeType = ast.node_type || 'Unknown';
+          let result = `${nodeType} {`;
+          const keys = Object.keys(ast).filter(key => key !== 'node_type' && key !== 'lineno' && key !== 'col_offset');
+          if (keys.length > 0) {
+            result += '\n';
+            result += keys.map(key => {
+              const value = ast[key];
+              if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+                return `${spaces}  ${key}: ${JSON.stringify(value)}`;
+              } else {
+                return `${spaces}  ${key}: ${formatAstForDisplay(value, indent + 1)}`;
+              }
+            }).join(',\n');
+            result += '\n' + spaces;
+          }
+          result += '}';
+          return result;
+        }
+      } else {
+        return JSON.stringify(ast);
+      }
+    }
+
+    // --- API Call Functions ---
+    async function apiCall(endpoint, body) {
+      try {
+        const response = await fetch(`${API_URL}/${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const data = await response.json();
+        if (!data.success) {
+          throw new Error(data.error || '请求失败');
+        }
+        return data;
+      } catch (error) {
+        console.error('API Error:', error);
+        throw error;
+      }
+    }
+
+    // --- Main Functions ---
+    async function parseCode() {
+      try {
+        parseBtn.disabled = true;
+        parseBtn.textContent = '解析中...';
+
+        const data = await apiCall('parse', { code: sourceCodeEl.value });
+        currentAstJson = data.ast;
+        operationHistory = [];
+
+        showStatus('parse-status', '代码解析成功！', 'success');
+
+        // Update AST view
+        if (astTreeEl.style.display !== 'none') {
+          astTreeEl.textContent = formatAstForDisplay(currentAstJson);
+        }
+
+        // Enable transform operations
+        document.querySelectorAll('.operation button').forEach(btn => btn.disabled = false);
+
+      } catch (error) {
+        showStatus('parse-status', `解析失败: ${error.message}`, 'error');
+        currentAstJson = null;
+      } finally {
+        parseBtn.disabled = false;
+        parseBtn.textContent = '🔍 解析代码';
+      }
+    }
+
+    async function applyTransform(operation) {
+      if (!currentAstJson) {
+        showStatus('transform-status', '请先解析代码！', 'error');
+        return;
+      }
+
+      let params = {};
+
+      try {
+        switch (operation) {
+          case 'rename_function':
+            const oldName = document.getElementById('old-name').value;
+            const newName = document.getElementById('new-name').value;
+            if (!oldName || !newName) {
+              throw new Error('请提供原函数名和新函数名');
+            }
+            params = { old_name: oldName, new_name: newName };
+            break;
+
+          case 'add_logging':
+            const message = document.getElementById('log-message').value || '函数执行';
+            params = { message };
+            break;
+
+          case 'replace_constants':
+            const oldValue = document.getElementById('old-value').value;
+            const newValue = document.getElementById('new-value').value;
+            if (!oldValue || !newValue) {
+              throw new Error('请提供原值和新值');
+            }
+            params = { old_value: oldValue, new_value: newValue };
+            break;
+
+          case 'remove_statements':
+            const stmtType = document.getElementById('stmt-type').value;
+            params = { statement_type: stmtType };
+            break;
+        }
+
+        const data = await apiCall('transform', {
+          ast: currentAstJson,
+          operation,
+          params
+        });
+
+        currentAstJson = data.ast;
+        operationHistory.push({ operation, params });
+
+        // Generate new code
+        const codeData = await apiCall('unparse', { ast: currentAstJson });
+        resultCodeEl.textContent = codeData.code;
+
+        showStatus('transform-status', `${operation} 转换成功！`, 'success');
+
+        // Update AST view
+        if (astTreeEl.style.display !== 'none') {
+          astTreeEl.textContent = formatAstForDisplay(currentAstJson);
+        }
+
+      } catch (error) {
+        showStatus('transform-status', `转换失败: ${error.message}`, 'error');
+      }
+    }
+
+    async function runCode() {
+      const codeToRun = resultCodeEl.textContent;
+      if (!codeToRun) {
+        showStatus('execution-status', '没有代码可运行，请先进行转换！', 'error');
+        return;
+      }
+
+      try {
+        runBtn.disabled = true;
+        runBtn.textContent = '运行中...';
+        outputEl.textContent = '执行中...';
+
+        const data = await apiCall('execute', { code: codeToRun });
+
+        let output = '';
+        if (data.output) {
+          output += data.output;
+        }
+        if (data.error) {
+          output += '\n[错误输出]\n' + data.error;
+        }
+
+        outputEl.textContent = output || '(无输出)';
+        showStatus('execution-status', '代码执行完成！', 'success');
+
+      } catch (error) {
+        outputEl.textContent = `执行错误: ${error.message}`;
+        showStatus('execution-status', `执行失败: ${error.message}`, 'error');
+      } finally {
+        runBtn.disabled = false;
+        runBtn.textContent = '▶️ 运行代码';
+      }
+    }
+
+    function toggleAstView() {
+      const toggleBtn = document.getElementById('ast-toggle-btn');
+      if (astTreeEl.style.display === 'none') {
+        astTreeEl.style.display = 'block';
+        toggleBtn.textContent = '隐藏 AST';
+        if (currentAstJson) {
+          astTreeEl.textContent = formatAstForDisplay(currentAstJson);
+        }
+      } else {
+        astTreeEl.style.display = 'none';
+        toggleBtn.textContent = '显示 AST';
+      }
+    }
+
+    async function saveWorkflow() {
+      const workflowName = document.getElementById('workflow-name').value;
+      if (!workflowName) {
+        showStatus('workflow-status', '请输入工作流名称！', 'error');
+        return;
+      }
+
+      try {
+        const workflowData = {
+          name: workflowName,
+          operations: operationHistory,
+          source_code: sourceCodeEl.value
+        };
+
+        const data = await apiCall('save_workflow', workflowData);
+        showStatus('workflow-status', data.message, 'success');
+
+      } catch (error) {
+        showStatus('workflow-status', `保存失败: ${error.message}`, 'error');
+      }
+    }
+
+    async function loadWorkflow() {
+      try {
+        const data = await apiCall('load_workflow', { workflow_id: 'sample' });
+        const workflow = data.workflow;
+
+        showStatus('workflow-status', `加载工作流: ${workflow.name}`, 'success');
+
+        // Apply operations
+        for (const op of workflow.operations) {
+          // Fill in the form fields based on operation
+          if (op.type === 'rename_function') {
+            document.getElementById('old-name').value = op.params.old_name;
+            document.getElementById('new-name').value = op.params.new_name;
+          } else if (op.type === 'add_logging') {
+            document.getElementById('log-message').value = op.params.message;
+          }
+        }
+
+      } catch (error) {
+        showStatus('workflow-status', `加载失败: ${error.message}`, 'error');
+      }
+    }
+
+    function resetWorkflow() {
+      // Clear all inputs
+      document.getElementById('old-name').value = '';
+      document.getElementById('new-name').value = '';
+      document.getElementById('log-message').value = '函数执行';
+      document.getElementById('old-value').value = '';
+      document.getElementById('new-value').value = '';
+      document.getElementById('workflow-name').value = '';
+
+      // Clear results
+      resultCodeEl.textContent = '';
+      outputEl.textContent = '等待执行...';
+      astTreeEl.textContent = '解析代码后，AST 结构将在这里显示...';
+
+      // Reset state
+      currentAstJson = null;
+      operationHistory = [];
+
+      // Disable transform operations
+      document.querySelectorAll('.operation button').forEach(btn => btn.disabled = true);
+
+      showStatus('workflow-status', '工作流已重置', 'success');
+    }
+
+    // --- Event Listeners ---
+    parseBtn.addEventListener('click', parseCode);
+    runBtn.addEventListener('click', runCode);
+
+    // Initialize
+    document.querySelectorAll('.operation button').forEach(btn => btn.disabled = true);
+  </script>
+</body>
+
+</html>
